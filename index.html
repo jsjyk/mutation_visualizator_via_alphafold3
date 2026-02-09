@@ -19,11 +19,12 @@
         .loading-overlay {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.9);
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 10;
+            z-index: 20;
             display: none;
         }
     </style>
@@ -31,8 +32,8 @@
 <body class="bg-gray-50 p-8">
 
     <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
-        <h1 class="text-2xl font-bold mb-4 text-blue-700">Gene Mutation Visualizer</h1>
-        <p class="mb-4 text-gray-600">AlphaFold DB 구조를 불러와 변이 위치를 표시합니다.</p>
+        <h1 class="text-2xl font-bold mb-4 text-blue-700">Gene Mutation Visualizer (v3)</h1>
+        <p class="mb-4 text-gray-600">AlphaFold DB 구조를 로드하여 변이 위치를 시각화합니다.</p>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div>
@@ -41,29 +42,30 @@
                        class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700">HGVSp Short</label>
-                <input type="text" id="mutationInput" value="p.E294*" placeholder="예: p.Arg175His 또는 p.E294*" 
+                <label class="block text-sm font-medium text-gray-700">HGVSp / Position</label>
+                <input type="text" id="mutationInput" value="p.Arg175His" placeholder="예: p.Arg175His, p.E294*, 294" 
                        class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
             </div>
             <div class="flex items-end">
                 <button onclick="visualize()" 
-                        class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 transition">
+                        class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 transition font-bold">
                     구조 확인하기
                 </button>
             </div>
         </div>
 
-        <div id="statusMsg" class="mb-2 text-sm font-semibold h-6"></div>
+        <div id="statusMsg" class="mb-2 text-sm font-bold min-h-[24px]"></div>
 
         <div id="viewer_container">
             <div id="gldiv" style="width: 100%; height: 100%;"></div>
             <div id="loading" class="loading-overlay">
-                <span class="text-xl font-bold animate-pulse">데이터 로딩 중...</span>
+                <span class="text-xl font-bold text-blue-600 animate-pulse mb-2">데이터 처리 중...</span>
+                <span id="loadingText" class="text-sm text-gray-500">잠시만 기다려주세요</span>
             </div>
         </div>
         
         <div class="mt-4 text-xs text-gray-500">
-            * Data Source: AlphaFold Protein Structure Database & MyGene.info<br>
+            * Data Source: AlphaFold Protein Structure Database, MyGene.info<br>
             * Viewer: 3Dmol.js
         </div>
     </div>
@@ -79,108 +81,126 @@
 
         async function visualize() {
             const gene = $('#geneInput').val().trim().toUpperCase();
-            const hgvsp = $('#mutationInput').val().trim();
+            const inputMutation = $('#mutationInput').val().trim();
             const status = $('#statusMsg');
             const loader = $('#loading');
+            const loadText = $('#loadingText');
 
-            // 상태 메시지 초기화
+            // UI 초기화
             status.text("").css('color', 'black');
-
-            if (!gene || !hgvsp) {
-                status.text("⚠️ Gene Symbol과 Mutation 정보를 모두 입력해주세요.").css('color', 'red');
-                return;
-            }
-
-            // --- [핵심 수정] 숫자만 추출하는 로직 ---
-            // 'Prot' 라이브러리 없이 정규식(Regex)을 사용하여 숫자만 추출
-            // 예: "p.Arg175His" -> "175", "p.E294*" -> "294", "E294" -> "294"
-            const residueMatch = hgvsp.match(/(\d+)/); 
-
-            if (!residueMatch) {
-                status.text("⚠️ 입력 값에서 변이 위치(숫자)를 찾을 수 없습니다.").css('color', 'red');
-                return;
-            }
-            const residuePos = parseInt(residueMatch[1]); // 추출된 숫자
-            // ------------------------------------
-
             loader.css('display', 'flex');
-            status.text(`🔍 ${gene} 검색 중...`);
 
             try {
-                // 1. Gene Symbol -> UniProt ID 변환 (MyGene.info)
-                const geneData = await $.ajax({
-                    url: `https://mygene.info/v3/query?q=symbol:${gene}&fields=uniprot`,
-                    method: 'GET'
+                // 1. 입력값 검증
+                if (!gene || !inputMutation) {
+                    throw new Error("Gene Symbol과 Mutation 정보를 모두 입력해주세요.");
+                }
+
+                // 2. 숫자 추출 (어떤 형식이든 숫자만 뽑아냄)
+                const residueMatch = inputMutation.match(/(\d+)/);
+                if (!residueMatch) {
+                    throw new Error("입력 값에서 변이 위치(숫자)를 찾을 수 없습니다.");
+                }
+                const residuePos = parseInt(residueMatch[1]);
+
+                // 3. MyGene.info에서 UniProt ID 검색
+                loadText.text(`Gene '${gene}' 정보 검색 중...`);
+                
+                // jQuery AJAX를 Promise로 감싸서 에러 핸들링 강화
+                const geneData = await new Promise((resolve, reject) => {
+                    $.ajax({
+                        url: `https://mygene.info/v3/query?q=symbol:${gene}&fields=uniprot`,
+                        method: 'GET',
+                        success: resolve,
+                        error: (jqXHR, textStatus, errorThrown) => {
+                            reject(new Error(`Gene 검색 실패: ${textStatus} - ${errorThrown}`));
+                        }
+                    });
                 });
 
-                if (!geneData.hits || geneData.hits.length === 0 || !geneData.hits[0].uniprot) {
-                    throw new Error("UniProt ID를 찾을 수 없습니다. Gene Symbol을 확인해주세요.");
+                console.log("Gene Data:", geneData); // 디버깅용 로그
+
+                if (!geneData.hits || geneData.hits.length === 0) {
+                    throw new Error(`'${gene}'에 대한 검색 결과가 없습니다.`);
                 }
 
-                // UniProt ID 추출 (Swiss-Prot 우선)
+                const hit = geneData.hits[0];
+                if (!hit.uniprot) {
+                    throw new Error(`'${gene}'의 UniProt ID 정보가 없습니다.`);
+                }
+
+                // UniProt ID 추출 로직 (Swiss-Prot 우선, 없으면 TrEMBL)
                 let uniprotID = null;
-                const uniprotObj = geneData.hits[0].uniprot;
-
-                if (uniprotObj['Swiss-Prot']) {
-                    uniprotID = Array.isArray(uniprotObj['Swiss-Prot']) ? uniprotObj['Swiss-Prot'][0] : uniprotObj['Swiss-Prot'];
-                } else if (uniprotObj.TrEMBL) {
-                    uniprotID = Array.isArray(uniprotObj.TrEMBL) ? uniprotObj.TrEMBL[0] : uniprotObj.TrEMBL;
+                if (hit.uniprot['Swiss-Prot']) {
+                    uniprotID = hit.uniprot['Swiss-Prot'];
+                } else if (hit.uniprot.TrEMBL) {
+                    uniprotID = hit.uniprot.TrEMBL;
                 }
 
-                if (!uniprotID) throw new Error("유효한 UniProt ID가 없습니다.");
-                
-                status.text(`🧬 UniProt ID: ${uniprotID} 구조 로딩 중...`);
+                // 배열인 경우 첫 번째 값 사용
+                if (Array.isArray(uniprotID)) {
+                    uniprotID = uniprotID[0];
+                }
 
-                // 2. AlphaFold DB에서 PDB 파일 로드
+                if (!uniprotID) {
+                    throw new Error("유효한 UniProt ID를 추출하지 못했습니다.");
+                }
+
+                loadText.text(`UniProt ID: ${uniprotID} 구조 다운로드 중...`);
+
+                // 4. AlphaFold PDB 데이터 로드
                 const pdbUrl = `https://alphafold.ebi.ac.uk/files/AF-${uniprotID}-F1-model_v4.pdb`;
 
-                // 기존 모델 지우기
                 viewer.clear();
-                
-                // AJAX로 PDB 데이터 가져오기 (에러 핸들링을 위해)
-                await $.ajax({
-                    url: pdbUrl,
-                    success: function(data) {
-                        viewer.addModel(data, "pdb");
-                        
-                        // 기본 스타일 (Cartoon)
-                        viewer.setStyle({}, {cartoon: {color: 'spectrum'}});
 
-                        // 3. Mutation 위치 하이라이트
-                        // 빨간색 막대(Stick)와 구(Sphere)로 표시
-                        viewer.addStyle({resi: residuePos}, {stick: {colorscheme: 'redCarbon', radius: 0.3}});
-                        viewer.addStyle({resi: residuePos}, {sphere: {color: 'red', opacity: 0.6, scale: 0.8}});
-                        
-                        // 라벨 추가
-                        viewer.addLabel(`Mutation: ${hgvsp}`, {
-                            position: {resi: residuePos}, 
-                            backgroundColor: 'black', 
-                            fontColor: 'white',
-                            fontSize: 16,
-                            showBackground: true,
-                            alignment: 'center'
-                        });
+                await new Promise((resolve, reject) => {
+                    $.ajax({
+                        url: pdbUrl,
+                        success: function(data) {
+                            try {
+                                viewer.addModel(data, "pdb");
+                                viewer.setStyle({}, {cartoon: {color: 'spectrum'}});
 
-                        // 줌인
-                        viewer.zoomTo();
-                        // 변이 위치를 중심으로 카메라 조정 (선택 사항)
-                        // viewer.zoomTo({resi: residuePos}); 
+                                // 변이 위치 표시
+                                viewer.addStyle({resi: residuePos}, {stick: {colorscheme: 'redCarbon', radius: 0.3}});
+                                viewer.addStyle({resi: residuePos}, {sphere: {color: 'red', opacity: 0.6, scale: 0.8}});
+                                
+                                viewer.addLabel(`Pos: ${residuePos} (${inputMutation})`, {
+                                    position: {resi: residuePos}, 
+                                    backgroundColor: 'black', 
+                                    fontColor: 'white',
+                                    fontSize: 16,
+                                    showBackground: true
+                                });
 
-                        viewer.render();
-                        status.text(`✅ ${gene} 구조 로드 완료. (Pos: ${residuePos})`).css('color', 'green');
-                    },
-                    error: function(xhr) {
-                        if(xhr.status === 404) {
-                            throw new Error(`AlphaFold DB에 ${uniprotID} 구조가 없습니다.`);
-                        } else {
-                            throw new Error("구조 파일을 다운로드하는 중 문제가 발생했습니다.");
+                                viewer.zoomTo();
+                                viewer.render();
+                                resolve();
+                            } catch (e) {
+                                reject(e);
+                            }
+                        },
+                        error: function(jqXHR) {
+                            if (jqXHR.status === 404) {
+                                reject(new Error(`AlphaFold DB에 ${uniprotID} 구조 파일이 없습니다.`));
+                            } else {
+                                reject(new Error(`구조 파일 다운로드 실패 (상태 코드: ${jqXHR.status})`));
+                            }
                         }
-                    }
+                    });
                 });
 
+                status.text(`✅ ${gene} (${uniprotID}) 로드 완료. 변이 위치: ${residuePos}`).css('color', 'green');
+
             } catch (error) {
-                console.error(error);
-                status.text(`❌ ${error.message}`).css('color', 'red');
+                console.error("Error Detail:", error);
+                
+                // 에러 메시지 추출 (undefined 방지)
+                let msg = error.message;
+                if (!msg) msg = JSON.stringify(error);
+                if (msg === "{}") msg = "알 수 없는 네트워크 오류가 발생했습니다.";
+
+                status.text(`❌ 오류 발생: ${msg}`).css('color', 'red');
             } finally {
                 loader.css('display', 'none');
             }
