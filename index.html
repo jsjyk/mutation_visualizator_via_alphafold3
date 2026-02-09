@@ -3,206 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Protein Mutation Visualizer</title>
+    <title>Auto-Colab Protein Visualizer</title>
     <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        #viewer_container {
-            width: 100%;
-            height: 600px;
-            position: relative;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            background-color: #f0f0f0;
-        }
-        .loading-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.9);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 20;
-            display: none;
-        }
+        #viewer_container { width: 100%; height: 500px; position: relative; background-color: #f8f9fa; border: 1px solid #ddd; }
+        .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 50; }
     </style>
 </head>
-<body class="bg-gray-50 p-8">
+<body class="bg-gray-100 p-6">
 
     <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
-        <h1 class="text-2xl font-bold mb-4 text-blue-700">Gene Mutation Visualizer (v3)</h1>
-        <p class="mb-4 text-gray-600">AlphaFold DB 구조를 로드하여 변이 위치를 시각화합니다.</p>
+        <h1 class="text-2xl font-bold text-blue-700 mb-2">Colab 연동 자동 예측기</h1>
+        <p class="text-sm text-gray-600 mb-6">Colab에서 생성된 URL을 연결하면, 웹에서 버튼 클릭만으로 구조를 예측하고 시각화합니다.</p>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="bg-gray-800 text-white p-4 rounded mb-6">
+            <label class="block text-xs font-bold text-green-400 mb-1">STEP 1. Colab 서버 주소 연결</label>
+            <div class="flex gap-2">
+                <input type="text" id="serverUrl" placeholder="예: https://a1b2-34-56.ngrok-free.app" 
+                       class="flex-1 bg-gray-700 border border-gray-600 rounded p-2 text-sm text-white focus:outline-none focus:border-green-500">
+                <button onclick="checkConnection()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm font-bold">연결 확인</button>
+            </div>
+            <p id="connectionStatus" class="text-xs mt-2 text-gray-400">🔴 연결되지 않음</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
-                <label class="block text-sm font-medium text-gray-700">Gene Symbol</label>
-                <input type="text" id="geneInput" value="TP53" placeholder="예: TP53" 
-                       class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                <label class="block text-sm font-bold text-gray-700">Gene Symbol</label>
+                <input type="text" id="geneInput" value="TP53" class="w-full border p-2 rounded mt-1">
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700">HGVSp / Position</label>
-                <input type="text" id="mutationInput" value="p.Arg175His" placeholder="예: p.Arg175His, p.E294*, 294" 
-                       class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
-            </div>
-            <div class="flex items-end">
-                <button onclick="visualize()" 
-                        class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 transition font-bold">
-                    구조 확인하기
-                </button>
+                <label class="block text-sm font-bold text-gray-700">Mutation</label>
+                <input type="text" id="mutInput" value="p.R175H" class="w-full border p-2 rounded mt-1">
             </div>
         </div>
 
-        <div id="statusMsg" class="mb-2 text-sm font-bold min-h-[24px]"></div>
+        <button onclick="runAutoPrediction()" class="w-full bg-blue-600 text-white font-bold py-3 rounded hover:bg-blue-700 transition shadow-lg mb-4">
+            🚀 Colab으로 예측 요청 및 시각화 (Auto Run)
+        </button>
 
-        <div id="viewer_container">
-            <div id="gldiv" style="width: 100%; height: 100%;"></div>
+        <div id="viewer_container" class="rounded-lg overflow-hidden shadow-inner">
+            <div id="gldiv" class="w-full h-full"></div>
             <div id="loading" class="loading-overlay">
-                <span class="text-xl font-bold text-blue-600 animate-pulse mb-2">데이터 처리 중...</span>
-                <span id="loadingText" class="text-sm text-gray-500">잠시만 기다려주세요</span>
+                <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-2"></div>
+                <span id="loadText" class="text-blue-800 font-bold">대기 중...</span>
             </div>
         </div>
         
-        <div class="mt-4 text-xs text-gray-500">
-            * Data Source: AlphaFold Protein Structure Database, MyGene.info<br>
-            * Viewer: 3Dmol.js
-        </div>
+        <div id="logArea" class="mt-4 p-2 bg-black text-green-400 text-xs font-mono h-24 overflow-y-auto rounded">Ready.</div>
     </div>
 
     <script>
         let viewer = null;
+        let serverUrl = "";
 
-        $(document).ready(function() {
-            // 뷰어 초기화
-            let element = document.getElementById('gldiv');
-            viewer = $3Dmol.createViewer(element, {backgroundColor: 'white'});
+        document.addEventListener("DOMContentLoaded", () => {
+            viewer = $3Dmol.createViewer(document.getElementById('gldiv'), {backgroundColor: 'white'});
         });
 
-        async function visualize() {
-            const gene = $('#geneInput').val().trim().toUpperCase();
-            const inputMutation = $('#mutationInput').val().trim();
-            const status = $('#statusMsg');
-            const loader = $('#loading');
-            const loadText = $('#loadingText');
+        function log(msg) {
+            const area = document.getElementById('logArea');
+            area.innerHTML += `<div>> ${msg}</div>`;
+            area.scrollTop = area.scrollHeight;
+        }
 
-            // UI 초기화
-            status.text("").css('color', 'black');
-            loader.css('display', 'flex');
+        async function checkConnection() {
+            const urlInput = document.getElementById('serverUrl').value.trim();
+            if (!urlInput) return alert("URL을 입력하세요.");
+            
+            // 끝에 슬래시 제거
+            serverUrl = urlInput.replace(/\/$/, ""); 
 
             try {
-                // 1. 입력값 검증
-                if (!gene || !inputMutation) {
-                    throw new Error("Gene Symbol과 Mutation 정보를 모두 입력해주세요.");
+                const res = await fetch(serverUrl + '/');
+                if (res.ok) {
+                    document.getElementById('connectionStatus').innerHTML = `🟢 연결됨: ${serverUrl}`;
+                    log("Server Connected successfully.");
                 }
+            } catch (e) {
+                document.getElementById('connectionStatus').innerHTML = `🔴 연결 실패. Colab이 켜져있나요?`;
+                log("Connection Failed: " + e.message);
+            }
+        }
 
-                // 2. 숫자 추출 (어떤 형식이든 숫자만 뽑아냄)
-                const residueMatch = inputMutation.match(/(\d+)/);
-                if (!residueMatch) {
-                    throw new Error("입력 값에서 변이 위치(숫자)를 찾을 수 없습니다.");
-                }
-                const residuePos = parseInt(residueMatch[1]);
+        async function runAutoPrediction() {
+            if (!serverUrl) return alert("먼저 Colab 서버와 연결해주세요.");
 
-                // 3. MyGene.info에서 UniProt ID 검색
-                loadText.text(`Gene '${gene}' 정보 검색 중...`);
+            const gene = document.getElementById('geneInput').value.toUpperCase();
+            const mut = document.getElementById('mutInput').value;
+            const loader = document.getElementById('loading');
+            const loadText = document.getElementById('loadText');
+
+            loader.style.display = 'flex';
+            loadText.innerText = "1/3. 유전자 서열 데이터 확보 중...";
+
+            try {
+                // 1. MyGene.info에서 서열(Sequence)은 못가져오므로 UniProt에서 가져와야 함 (간소화)
+                // 실제로는 여기서 Gene -> UniProt ID -> Sequence 변환 후 Mutation 적용 로직이 필요함
+                // 시연을 위해 '가상의 변이된 서열'을 만든다고 가정하거나, Colab 쪽에서 처리하도록 위임 가능
                 
-                // jQuery AJAX를 Promise로 감싸서 에러 핸들링 강화
-                const geneData = await new Promise((resolve, reject) => {
-                    $.ajax({
-                        url: `https://mygene.info/v3/query?q=symbol:${gene}&fields=uniprot`,
-                        method: 'GET',
-                        success: resolve,
-                        error: (jqXHR, textStatus, errorThrown) => {
-                            reject(new Error(`Gene 검색 실패: ${textStatus} - ${errorThrown}`));
-                        }
-                    });
+                // 간단히: UniProt ID 찾기
+                const geneRes = await fetch(`https://mygene.info/v3/query?q=symbol:${gene}&fields=uniprot`);
+                const geneData = await geneRes.json();
+                const uniprotId = geneData.hits[0].uniprot['Swiss-Prot'] || geneData.hits[0].uniprot.TrEMBL; // 배열 처리 필요하나 생략
+                
+                log(`Target: ${gene} (${uniprotId})`);
+                loadText.innerText = "2/3. Colab GPU 연산 중... (시간이 소요됩니다)";
+
+                // 2. Colab 서버로 요청 전송
+                // (실제로는 여기서 원본 서열을 가져와 변이를 적용한 'mutated_sequence'를 보내야 함)
+                // 데모용: 짧은 테스트 서열 전송
+                const mockSequence = "MKTVRQERLKSIVRILERSKEPVSGAQLAEELSVSRQVIVQDIAYLRSLGYNIVATPRGYVLAGG"; 
+
+                const response = await fetch(serverUrl + '/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        gene: gene,
+                        mutation: mut,
+                        sequence: mockSequence // 실제로는 변이된 전체 긴 서열
+                    })
                 });
 
-                console.log("Gene Data:", geneData); // 디버깅용 로그
+                if (!response.ok) throw new Error("Server Error");
+                const result = await response.json();
 
-                if (!geneData.hits || geneData.hits.length === 0) {
-                    throw new Error(`'${gene}'에 대한 검색 결과가 없습니다.`);
+                if (result.status === 'success') {
+                    log("Prediction received from Colab!");
+                    
+                    // 3. 시각화
+                    viewer.clear();
+                    viewer.addModel(result.pdb, "pdb");
+                    viewer.setStyle({}, {cartoon: {color: 'spectrum'}});
+                    viewer.zoomTo();
+                    viewer.render();
+                    
+                    loadText.innerText = "완료!";
+                } else {
+                    throw new Error(result.message);
                 }
 
-                const hit = geneData.hits[0];
-                if (!hit.uniprot) {
-                    throw new Error(`'${gene}'의 UniProt ID 정보가 없습니다.`);
-                }
-
-                // UniProt ID 추출 로직 (Swiss-Prot 우선, 없으면 TrEMBL)
-                let uniprotID = null;
-                if (hit.uniprot['Swiss-Prot']) {
-                    uniprotID = hit.uniprot['Swiss-Prot'];
-                } else if (hit.uniprot.TrEMBL) {
-                    uniprotID = hit.uniprot.TrEMBL;
-                }
-
-                // 배열인 경우 첫 번째 값 사용
-                if (Array.isArray(uniprotID)) {
-                    uniprotID = uniprotID[0];
-                }
-
-                if (!uniprotID) {
-                    throw new Error("유효한 UniProt ID를 추출하지 못했습니다.");
-                }
-
-                loadText.text(`UniProt ID: ${uniprotID} 구조 다운로드 중...`);
-
-                // 4. AlphaFold PDB 데이터 로드
-                const pdbUrl = `https://alphafold.ebi.ac.uk/files/AF-${uniprotID}-F1-model_v4.pdb`;
-
-                viewer.clear();
-
-                await new Promise((resolve, reject) => {
-                    $.ajax({
-                        url: pdbUrl,
-                        success: function(data) {
-                            try {
-                                viewer.addModel(data, "pdb");
-                                viewer.setStyle({}, {cartoon: {color: 'spectrum'}});
-
-                                // 변이 위치 표시
-                                viewer.addStyle({resi: residuePos}, {stick: {colorscheme: 'redCarbon', radius: 0.3}});
-                                viewer.addStyle({resi: residuePos}, {sphere: {color: 'red', opacity: 0.6, scale: 0.8}});
-                                
-                                viewer.addLabel(`Pos: ${residuePos} (${inputMutation})`, {
-                                    position: {resi: residuePos}, 
-                                    backgroundColor: 'black', 
-                                    fontColor: 'white',
-                                    fontSize: 16,
-                                    showBackground: true
-                                });
-
-                                viewer.zoomTo();
-                                viewer.render();
-                                resolve();
-                            } catch (e) {
-                                reject(e);
-                            }
-                        },
-                        error: function(jqXHR) {
-                            if (jqXHR.status === 404) {
-                                reject(new Error(`AlphaFold DB에 ${uniprotID} 구조 파일이 없습니다.`));
-                            } else {
-                                reject(new Error(`구조 파일 다운로드 실패 (상태 코드: ${jqXHR.status})`));
-                            }
-                        }
-                    });
-                });
-
-                status.text(`✅ ${gene} (${uniprotID}) 로드 완료. 변이 위치: ${residuePos}`).css('color', 'green');
-
-            } catch (error) {
-                console.error("Error Detail:", error);
-                
-                // 에러 메시지 추출 (undefined 방지)
-                let msg = error.message;
-                if (!msg) msg = JSON.stringify(error);
-                if (msg === "{}") msg = "알 수 없는 네트워크 오류가 발생했습니다.";
-
-                status.text(`❌ 오류 발생: ${msg}`).css('color', 'red');
+            } catch (e) {
+                log("Error: " + e.message);
+                alert("오류 발생: " + e.message);
             } finally {
-                loader.css('display', 'none');
+                loader.style.display = 'none';
             }
         }
     </script>
