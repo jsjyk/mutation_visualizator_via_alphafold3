@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Protein Mutation Visualizer (AlphaFold DB)</title>
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #viewer_container {
+            width: 100%;
+            height: 600px;
+            position: relative;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #f0f0f0;
+        }
+        .loading-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 p-8">
+
+    <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold mb-4 text-blue-700">Gene Mutation Visualizer</h1>
+        <p class="mb-4 text-gray-600">AlphaFold DB 구조를 불러와 변이 위치를 표시합니다.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Gene Symbol</label>
+                <input type="text" id="geneInput" value="TP53" placeholder="예: TP53" 
+                       class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">HGVSp Short</label>
+                <input type="text" id="mutationInput" value="p.Arg175His" placeholder="예: p.Arg175His" 
+                       class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div class="flex items-end">
+                <button onclick="visualize()" 
+                        class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 transition">
+                    구조 확인하기
+                </button>
+            </div>
+        </div>
+
+        <div id="statusMsg" class="mb-2 text-sm font-semibold text-gray-700"></div>
+
+        <div id="viewer_container">
+            <div id="gldiv" style="width: 100%; height: 100%;"></div>
+            <div id="loading" class="loading-overlay">
+                <span class="text-xl font-bold animate-pulse">데이터 로딩 중...</span>
+            </div>
+        </div>
+        
+        <div class="mt-4 text-xs text-gray-500">
+            * Data Source: AlphaFold Protein Structure Database & MyGene.info<br>
+            * Viewer: 3Dmol.js
+        </div>
+    </div>
+
+    <script>
+        let viewer = null;
+
+        $(document).ready(function() {
+            // 뷰어 초기화
+            let element = document.getElementById('gldiv');
+            viewer = $3Dmol.createViewer(element, {backgroundColor: 'white'});
+        });
+
+        async function visualize() {
+            const gene = $('#geneInput').val().trim().toUpperCase();
+            const hgvsp = $('#mutationInput').val().trim();
+            const status = $('#statusMsg');
+            const loader = $('#loading');
+
+            if (!gene || !hgvsp) {
+                status.text("⚠️ Gene Symbol과 Mutation 정보를 모두 입력해주세요.").css('color', 'red');
+                return;
+            }
+
+            // Mutation 위치 파싱 (예: p.Arg175His -> 175)
+            const residueMatch = hgvsp.match(/(\d+)/);
+            if (!residueMatch) {
+                status.text("⚠️ HGVSp 형식에서 위치(숫자)를 찾을 수 없습니다.").css('color', 'red');
+                return;
+            }
+            const residuePos = parseInt(residueMatch[1]);
+
+            loader.css('display', 'flex');
+            status.text(`🔍 ${gene}의 UniProt ID 검색 중...`).css('color', 'black');
+
+            try {
+                // 1. Gene Symbol -> UniProt ID 변환 (MyGene.info API)
+                const geneData = await $.ajax({
+                    url: `https://mygene.info/v3/query?q=symbol:${gene}&fields=uniprot`,
+                    method: 'GET'
+                });
+
+                if (!geneData.hits || geneData.hits.length === 0 || !geneData.hits[0].uniprot || !geneData.hits[0].uniprot.Swiss-Prot) {
+                    throw new Error("UniProt ID를 찾을 수 없습니다. Gene Symbol을 확인해주세요.");
+                }
+
+                // Swiss-Prot ID가 우선, 없으면 첫 번째 ID 사용
+                const uniprotID = geneData.hits[0].uniprot['Swiss-Prot'] || geneData.hits[0].uniprot.TrEMBL[0];
+                
+                status.text(`🧬 UniProt ID: ${uniprotID} / AlphaFold 구조 다운로드 중...`);
+
+                // 2. AlphaFold DB에서 PDB 파일 로드
+                // AlphaFold DB URL 패턴: https://alphafold.ebi.ac.uk/files/AF-[UNIPROT]-F1-model_v4.pdb
+                const pdbUrl = `https://alphafold.ebi.ac.uk/files/AF-${uniprotID}-F1-model_v4.pdb`;
+
+                // 3Dmol.js로 로드
+                viewer.clear();
+                
+                // AJAX로 PDB 텍스트를 먼저 가져와서 에러 핸들링
+                try {
+                    await $.ajax({
+                        url: pdbUrl,
+                        success: function(data) {
+                            viewer.addModel(data, "pdb");
+                            
+                            // 스타일 설정
+                            viewer.setStyle({}, {cartoon: {color: 'spectrum'}}); // 전체 구조: Cartoon 스타일
+
+                            // 3. Mutation 위치 하이라이트
+                            // PDB 파일은 residue 번호가 1부터 시작하는 경우가 많음.
+                            // hgvsp 숫자와 매칭
+                            
+                            // 선택자 설정: resi는 residue number
+                            viewer.addStyle({resi: residuePos}, {stick: {colorscheme: 'redCarbon', radius: 0.3}});
+                            viewer.addStyle({resi: residuePos}, {sphere: {color: 'red', opacity: 0.7, scale: 0.5}});
+                            
+                            // 라벨 추가
+                            viewer.addLabel(`Mutation: ${hgvsp}`, {
+                                position: {resi: residuePos}, 
+                                backgroundColor: 'black', 
+                                fontColor: 'white',
+                                fontSize: 16
+                            });
+
+                            viewer.zoomTo();
+                            viewer.render();
+                            
+                            status.text(`✅ ${gene} (${uniprotID}) 구조 로드 완료. 변이 위치: ${residuePos}`).css('color', 'green');
+                        },
+                        error: function() {
+                            throw new Error("AlphaFold DB에 해당 단백질의 구조가 없습니다.");
+                        }
+                    });
+                } catch (e) {
+                    throw e;
+                }
+
+            } catch (error) {
+                console.error(error);
+                status.text(`❌ 오류 발생: ${error.message || error.responseText}`).css('color', 'red');
+            } finally {
+                loader.css('display', 'none');
+            }
+        }
+    </script>
+</body>
+</html>
