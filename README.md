@@ -1,1 +1,1 @@
-# mutation_visualizator_via_alphafold3
+# mutation_visualizator
